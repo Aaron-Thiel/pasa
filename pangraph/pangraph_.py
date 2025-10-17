@@ -59,15 +59,19 @@ class PanGraph():
         return ([v for i, v in enumerate(your_list) if i == 0 or v != your_list[i-1]])
 
     def get_node_coverage(self, node_id):
-        return(float(node_id.split("_")[5]))
+        return self.get_node_coverage_safe(node_id)
+
     def get_multiplicity(self, node_id):
-        return(round(float(node_id.split("_")[5][:-1])/self.basecoverage))
+        coverage = self.get_node_coverage_safe(node_id)
+        if hasattr(self, 'basecoverage') and self.basecoverage > 0:
+            return round(coverage / self.basecoverage)
+        return 1  # Default multiplicity
 
     def compute_multiplicity(self, sample_df):
         gene_position_sub = sample_df.copy()
         nodes_list = list(gene_position_sub.iloc[:,1].values)
-        nodes_len = [int(node.split("_")[3]) for node in nodes_list]
-        nodes_coverage = [float(node.split("_")[5]) for node in nodes_list]
+        nodes_len = [get_node_length(node) for node in nodes_list]
+        nodes_coverage = [self.get_node_coverage_safe(node) for node in nodes_list]
         gene_position_sub['length'] = nodes_len
         gene_position_sub['coverage'] = nodes_coverage
         gene_position_sub = gene_position_sub.sort_values(by='length', ascending=False)
@@ -77,6 +81,15 @@ class PanGraph():
         for i in range(len(nodes_coverage)):
             self.node_multiplicity[gene_position_sub.iloc[i,1]] = expected_node_coverage[i]
         # return(self.node_multiplicity)
+
+    def get_node_coverage_safe(self, node_id):
+        """Get node coverage, supporting both NODE_ and contig_ formats."""
+        if node_id.startswith('NODE_'):
+            return float(node_id.split('_')[5])
+        elif node_id.startswith('contig_'):
+            return 50.0  # Default coverage
+        else:
+            return 50.0
 
     def get_pangraph_cost(self, source_id, target_id):
         ### Compute the cost between two contigs in the pangraph
@@ -386,7 +399,7 @@ class PanGraph():
         print("Clip the matrix 0.2 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         # adj_matrix = adj_matrix>=10 #version 1: quite good.
         adj_matrix = adj_matrix.multiply(adj_matrix>=0.1*self.n_samples)
-        self.H = nx.from_numpy_matrix(adj_matrix, create_using=nx.DiGraph)
+        self.H = nx.from_numpy_array(adj_matrix, create_using=nx.DiGraph)
         ## add node info
         mapping = {i: "C-" + str(i) for i in range(self.n_clusters)}
         self.H = nx.relabel_nodes(self.H, mapping)
@@ -471,11 +484,13 @@ class PanGraph():
                         ### only add the edge in the assembly graph
                         path_len = -1
                         path_nucleotides = -1
+                        nodeweightDict = params.get('nodeweightDict', {})
                         if assembly_graph.has_node(source_node) and assembly_graph.has_node(target_node):
                             try:
                                 path = nx.shortest_path(assembly_graph, source=source_node, target=target_node)
                                 for idxp in range(1, len(path)-1):
-                                    path_nucleotides = path_nucleotides + int(path[idxp].split("_")[3])
+                                    # Use nodeweightDict to get node length
+                                    path_nucleotides = path_nucleotides + nodeweightDict.get(path[idxp], 0)
                                 path_len = len(path)
                             except NetworkXNoPath:
                                 path = None
@@ -761,7 +776,7 @@ class PanGraph():
                 edge_list_assembly.append((append_strand_reverse(r), append_strand_reverse(l)))
         else:
             print("Use modified  assembly graph")
-            linkEdges, self.weighted_CG = getContigsAdjacency_v2(assem_dir)
+            linkEdges, self.weighted_CG, self.nodeweightDict = getContigsAdjacency_v2(assem_dir)
             for l, r in linkEdges:
             # for l,r in getContigsAdjacency_v2(assem_dir):
                 edge_list_assembly.append((append_strand(l), append_strand(r)))
@@ -834,7 +849,7 @@ class PanGraph():
         else:
             print("Re-infer the contigs strand: NO")
 
-        params = {'method': 'weight_path_assembly_v2', 'assembly_graph': assembly_graph, 'max_length': 5, 'maximum_matching': maximum_matching, 'graph':'directed', 'max_length_nucleotides': 8000, 'weighted_CG': self.weighted_CG}
+        params = {'method': 'weight_path_assembly_v2', 'assembly_graph': assembly_graph, 'max_length': 5, 'maximum_matching': maximum_matching, 'graph':'directed', 'max_length_nucleotides': 8000, 'weighted_CG': self.weighted_CG, 'nodeweightDict': self.nodeweightDict}
         self.min_weight = min_weight_val
         self.MLR = MLR
         contig_graph = self.join_contig(sample_id=incomplete_sample_id, min_weight=self.min_weight, params=params)
@@ -910,8 +925,8 @@ class PanGraph():
         print("compute base coverage")
         gene_position_sub = self.sample_df.copy()
         nodes_list = list(gene_position_sub.iloc[:,1].values)
-        nodes_len = [int(node.split("_")[3]) for node in nodes_list]
-        nodes_coverage = [float(node.split("_")[5]) for node in nodes_list]
+        nodes_len = [get_node_length(node) for node in nodes_list]
+        nodes_coverage = [self.get_node_coverage_safe(node) for node in nodes_list]
         gene_position_sub['length'] = nodes_len
         gene_position_sub['coverage'] = nodes_coverage
         gene_position_sub = gene_position_sub.sort_values(by='length', ascending=False)
@@ -945,7 +960,7 @@ class PanGraph():
         incomplete_sample_id = self.sample_info[self.sample_info.Name==incomplete_sample_name].iloc[0,1]
         assembly_graph = self.assembly_graph 
         # params = {'method': 'weight_path_assembly_v2', 'assembly_graph': self.assembly_graph, 'max_length': 5, 'maximum_matching': maximum_matching, 'graph':'directed', 'max_length_nucleotides': 8000}
-        params = {'method': 'weight_path_assembly_v2', 'assembly_graph': assembly_graph, 'max_length': 5, 'maximum_matching': maximum_matching, 'graph':'directed', 'max_length_nucleotides': 8000, 'weighted_CG': self.weighted_CG}
+        params = {'method': 'weight_path_assembly_v2', 'assembly_graph': assembly_graph, 'max_length': 5, 'maximum_matching': maximum_matching, 'graph':'directed', 'max_length_nucleotides': 8000, 'weighted_CG': self.weighted_CG, 'nodeweightDict': self.nodeweightDict}
         contig_graph = self.join_contig(sample_id=incomplete_sample_id, min_weight=self.min_weight, params=params)
         contig_graph = self.remove_cycle(assembly_graph)
         indegree_dict = dict(contig_graph.in_degree())

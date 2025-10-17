@@ -152,12 +152,18 @@ def getContigsAdjacency_v2(spadesOutDir=None, graphFilePath=None, pathFilePath=N
     #Read endpoints of each path (CONTIG) consisting of above components
     path_file = open(pathFilePath, 'r')
     contigs_list = []
+    ctg = None
     for _line in path_file.readlines():
-        if(_line.startswith('NODE_')):
-            ctg = _line.strip()
+        _line = _line.strip()
+        if not _line:  # Skip empty lines
+            continue
+        if(_line.startswith('NODE_') or _line.startswith('contig_')):
+            ctg = _line
             contigs_list.append(ctg)
         else:
-            _edges_from_path = _line.strip().split(',')
+            if ctg is None:
+                continue  # Skip edges without a contig name
+            _edges_from_path = _line.split(',')
             _start = _edges_from_path[0]; _end = _edges_from_path[-1]
             startDict[ctg] = _start
             endDict[ctg] = _end
@@ -205,7 +211,7 @@ def getContigsAdjacency_v2(spadesOutDir=None, graphFilePath=None, pathFilePath=N
     wp_vec = [(edges_list[i][0], edges_list[i][1], weight_vec[i]) for i in range(len(weight_vec))]
     weighted_CG = nx.DiGraph()
     weighted_CG.add_weighted_edges_from(wp_vec)
-    return (contigLinks, weighted_CG)
+    return (contigLinks, weighted_CG, nodeweightDict)
 
 
 def reverse_complement(seq):
@@ -424,10 +430,26 @@ def export_metadata(path_out_pangenome):
             genepos_tsv.write(str_genes[:-1]+'\n')
 
 def get_node_coverage(node_id):
-    return float(node_id.split('_')[5])
+    """Get node coverage from node ID. Supports both NODE_X_length_Y_cov_Z format and contig_X format."""
+    if node_id.startswith('NODE_'):
+        return float(node_id.split('_')[5])
+    elif node_id.startswith('contig_'):
+        # For simple contig format, return a default coverage
+        return 50.0
+    else:
+        # Unknown format, return default value
+        return 50.0
 
 def get_node_length(node_id):
-    return float(node_id.split('_')[3])
+    """Get node length from node ID. Supports both NODE_X_length_Y format and contig_X format."""
+    if node_id.startswith('NODE_'):
+        return float(node_id.split('_')[3])
+    elif node_id.startswith('contig_'):
+        # For simple contig format, return a default large length to avoid filtering
+        return 100000.0
+    else:
+        # Unknown format, return large value
+        return 100000.0
 
 def get_value(edge_df0, source_id, target_id):
     # if source_id in edge_df0['source'].values and target_id in edge_df0['target'].values:
